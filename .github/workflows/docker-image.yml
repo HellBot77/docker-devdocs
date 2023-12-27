@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  PLATFORMS: linux/amd64,linux/arm64
+  PLATFORMS: linux/arm64
   DOCKERHUB_USERNAME: helllord
   DOCKERHUB_REPOSITORY: devdocs
 
