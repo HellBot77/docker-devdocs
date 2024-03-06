@@ -7,9 +7,8 @@ on:
 
 env:
   PLATFORMS: linux/arm64
-  DOCKERHUB_USERNAME: helllord
-  DOCKERHUB_REPOSITORY: devdocs
-  TAG_GIT_COMMIT: freeCodeCamp/devdocs
+  SOURCE_REPOSITORY: freeCodeCamp/devdocs
+  DOCKERHUB_REPOSITORY: helllord/devdocs
 
 jobs:
   get-tag:
@@ -23,13 +22,12 @@ jobs:
           repository: hellbot77/get-tag
           sparse-checkout: get_tag.py
           sparse-checkout-cone-mode: false
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3
       - name: Get Docker image tag
         id: get-tag
-        run: python get_tag.py ${{ env.DOCKERHUB_USERNAME }}/${{ env.DOCKERHUB_REPOSITORY }} --git-commit ${{ env.TAG_GIT_COMMIT }} >> $GITHUB_OUTPUT
+        run: >
+          python3 get_tag.py ${{ github.event_name != 'workflow_dispatch' && env.DOCKERHUB_REPOSITORY || '""' }}
+          --gh-commit ${{ env.SOURCE_REPOSITORY }} >> $GITHUB_OUTPUT
+
   build-push:
     needs: get-tag
     if: ${{ needs.get-tag.outputs.tag }}
@@ -38,12 +36,13 @@ jobs:
       - name: Fetch repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.TAG_GIT_COMMIT }}
+          repository: ${{ env.SOURCE_REPOSITORY }}
           ref: ${{ needs.get-tag.outputs.tag }}
-      - name: Patch Dockerfile
+      - name: Apply patch
         run: |
           if [[ "$(head -n 1 Dockerfile)" == "FROM ruby:3.3.0" ]]; then
-            PATCH="FROM debian:bookworm as base
+            PATCH="
+            FROM debian:bookworm as base
             RUN apt update && apt install -y build-essential wget autoconf
             RUN wget https://github.com/postmodern/ruby-install/releases/download/v0.9.3/ruby-install-0.9.3.tar.gz \
               && tar -xzvf ruby-install-0.9.3.tar.gz \
@@ -51,10 +50,12 @@ jobs:
               && make install
             RUN ruby-install -p https://github.com/ruby/ruby/pull/9371.diff ruby 3.3.0
             ENV PATH=\"/opt/rubies/ruby-3.3.0/bin:\${PATH}\"
-            
-            "          
+            "
             echo -e "$PATCH$(tail -n +2 Dockerfile)" > Dockerfile
           fi
+      - name: Set Docker Hub username
+        id: dockerhub-username
+        run: echo "username=${DOCKERHUB_REPOSITORY%%/*}" >> $GITHUB_OUTPUT
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
@@ -64,7 +65,7 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ env.DOCKERHUB_USERNAME }}
+          username: ${{ steps.dockerhub-username.outputs.username }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -72,10 +73,10 @@ jobs:
           context: .
           platforms: ${{ env.PLATFORMS }}
           push: true
-          build-args: TAG=${{ needs.get-tag.outputs.tag }}
           tags: |
-            ${{ env.DOCKERHUB_USERNAME }}/${{ env.DOCKERHUB_REPOSITORY }}:${{ needs.get-tag.outputs.tag }}
-            ${{ env.DOCKERHUB_USERNAME }}/${{ env.DOCKERHUB_REPOSITORY }}:latest
+            ${{ env.DOCKERHUB_REPOSITORY }}:${{ needs.get-tag.outputs.tag }}
+            ${{ env.DOCKERHUB_REPOSITORY }}:latest
+
   cancel-action:
     needs: get-tag
     if: ${{ !needs.get-tag.outputs.tag }}
